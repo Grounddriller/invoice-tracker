@@ -49,7 +49,6 @@ function tsToDateInput(ts: any): string {
 
 function dateInputToTimestamp(v: string): Timestamp | null {
   if (!v) return null;
-  // Force midnight local time
   const d = new Date(`${v}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);
@@ -79,6 +78,11 @@ const textareaStyle: React.CSSProperties = {
   background: "#0b0b0b",
   color: "#fff",
   boxSizing: "border-box",
+};
+
+const disabledStyle: React.CSSProperties = {
+  opacity: 0.65,
+  cursor: "not-allowed",
 };
 
 export default function InvoiceReviewPage() {
@@ -142,7 +146,7 @@ export default function InvoiceReviewPage() {
       if (!dirty.current.has("tax")) setTax(data.tax != null ? String(data.tax) : "");
       if (!dirty.current.has("total")) setTotal(data.total != null ? String(data.total) : "");
 
-      // This is the key one: line items arrive AFTER extraction finishes.
+      // line items arrive AFTER extraction finishes.
       if (!dirty.current.has("lineItems")) {
         setLineItems(Array.isArray(data.lineItems) ? data.lineItems : []);
       }
@@ -156,8 +160,14 @@ export default function InvoiceReviewPage() {
     return inv.userId === user.uid;
   }, [inv, user]);
 
+  const isFinalized = inv?.status === "finalized";
+  const readOnly = isFinalized || saving || deleting; // no editing while finalized/saving/deleting
+
   async function save(status: "needs_review" | "finalized") {
     if (!canEdit || !invoiceId) return;
+
+    // Hard stop: finalized invoices cannot be edited/finalized again from UI
+    if (isFinalized) return;
 
     setSaving(true);
     try {
@@ -188,16 +198,19 @@ export default function InvoiceReviewPage() {
   }
 
   function updateLineItem(i: number, patch: Partial<LineItem>) {
+    if (readOnly) return;
     markDirty("lineItems");
     setLineItems((prev) => prev.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   }
 
   function removeLineItem(i: number) {
+    if (readOnly) return;
     markDirty("lineItems");
     setLineItems((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   function addLineItem() {
+    if (readOnly) return;
     markDirty("lineItems");
     setLineItems((prev) => [...prev, { description: "", quantity: null, unitPrice: null, amount: null }]);
   }
@@ -227,8 +240,7 @@ export default function InvoiceReviewPage() {
     try {
       const storageRef = ref(storage, inv.storagePath);
       const url = await getDownloadURL(storageRef);
-      
-      // Create a temporary anchor element to trigger download
+
       const link = document.createElement("a");
       link.href = url;
       link.download = inv.originalFileName || "invoice.pdf";
@@ -251,18 +263,48 @@ export default function InvoiceReviewPage() {
 
   return (
     <main style={{ maxWidth: 900, margin: "30px auto", padding: 16, color: "#fff" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>Review invoice</h1>
           <div style={{ opacity: 0.75, marginTop: 6 }}>
             Status: <b>{inv.status}</b>
+            {isFinalized && (
+              <span
+                style={{
+                  marginLeft: 10,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #444",
+                  background: "#111",
+                  color: "#fff",
+                  fontSize: 12,
+                }}
+              >
+                Finalized (read-only)
+              </span>
+            )}
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button
             onClick={() => router.push("/")}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #444", cursor: "pointer", background: "#111", color: "#fff" }}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid #444",
+              cursor: "pointer",
+              background: "#111",
+              color: "#fff",
+            }}
           >
             Back
           </button>
@@ -275,7 +317,7 @@ export default function InvoiceReviewPage() {
                 padding: "8px 12px",
                 borderRadius: 10,
                 border: "1px solid #444",
-                cursor: "pointer",
+                cursor: downloading ? "not-allowed" : "pointer",
                 background: "#111",
                 color: "#fff",
                 opacity: downloading ? 0.7 : 1,
@@ -285,33 +327,54 @@ export default function InvoiceReviewPage() {
             </button>
           )}
 
-          <button
-            disabled={saving}
-            onClick={() => save("needs_review")}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #444", cursor: "pointer", background: "#111", color: "#fff", opacity: saving ? 0.7 : 1 }}
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
+          {/* Save/Finalize hidden once finalized */}
+          {!isFinalized && (
+            <>
+              <button
+                disabled={saving || deleting}
+                onClick={() => save("needs_review")}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #444",
+                  cursor: saving || deleting ? "not-allowed" : "pointer",
+                  background: "#111",
+                  color: "#fff",
+                  opacity: saving || deleting ? 0.7 : 1,
+                }}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+
+              <button
+                disabled={saving || deleting}
+                onClick={() => save("finalized")}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #444",
+                  cursor: saving || deleting ? "not-allowed" : "pointer",
+                  background: "#111",
+                  color: "#fff",
+                  opacity: saving || deleting ? 0.7 : 1,
+                }}
+              >
+                {saving ? "Finalizing..." : "Finalize"}
+              </button>
+            </>
+          )}
 
           <button
-            disabled={saving}
-            onClick={() => save("finalized")}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #444", cursor: "pointer", background: "#111", color: "#fff", opacity: saving ? 0.7 : 1 }}
-          >
-            {saving ? "Finalizing..." : "Finalize"}
-          </button>
-
-          <button
-            disabled={deleting}
+            disabled={deleting || saving}
             onClick={deleteInvoice}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid #7a2a2a",
-              cursor: "pointer",
+              cursor: deleting || saving ? "not-allowed" : "pointer",
               background: "#1a0f0f",
               color: "#fff",
-              opacity: deleting ? 0.7 : 1,
+              opacity: deleting || saving ? 0.7 : 1,
             }}
           >
             {deleting ? "Deleting..." : "Delete"}
@@ -324,20 +387,36 @@ export default function InvoiceReviewPage() {
         <h2 style={{ fontSize: 16, fontWeight: 900, margin: 0 }}>Header</h2>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginTop: 12 }}>
-          <Field label="Supplier name" value={supplierName} onChange={(v) => (markDirty("supplierName"), setSupplierName(v))} />
-          <Field label="Invoice #" value={invoiceNumber} onChange={(v) => (markDirty("invoiceNumber"), setInvoiceNumber(v))} />
-          <Field label="PO #" value={purchaseOrderNumber} onChange={(v) => (markDirty("purchaseOrderNumber"), setPurchaseOrderNumber(v))} />
+          <Field
+            label="Supplier name"
+            value={supplierName}
+            disabled={readOnly}
+            onChange={(v) => (markDirty("supplierName"), setSupplierName(v))}
+          />
+          <Field
+            label="Invoice #"
+            value={invoiceNumber}
+            disabled={readOnly}
+            onChange={(v) => (markDirty("invoiceNumber"), setInvoiceNumber(v))}
+          />
+          <Field
+            label="PO #"
+            value={purchaseOrderNumber}
+            disabled={readOnly}
+            onChange={(v) => (markDirty("purchaseOrderNumber"), setPurchaseOrderNumber(v))}
+          />
 
           <div>
             <label style={{ fontWeight: 800, display: "block", marginBottom: 6 }}>Invoice date</label>
             <input
               type="date"
               value={invoiceDate}
+              disabled={readOnly}
               onChange={(e) => {
                 markDirty("invoiceDate");
                 setInvoiceDate(e.target.value);
               }}
-              style={inputStyle}
+              style={{ ...inputStyle, ...(readOnly ? disabledStyle : null) }}
             />
           </div>
 
@@ -346,29 +425,31 @@ export default function InvoiceReviewPage() {
             <input
               type="date"
               value={dueDate}
+              disabled={readOnly}
               onChange={(e) => {
                 markDirty("dueDate");
                 setDueDate(e.target.value);
               }}
-              style={inputStyle}
+              style={{ ...inputStyle, ...(readOnly ? disabledStyle : null) }}
             />
           </div>
 
-          <Field label="Subtotal" value={subtotal} onChange={(v) => (markDirty("subtotal"), setSubtotal(v))} />
-          <Field label="Tax" value={tax} onChange={(v) => (markDirty("tax"), setTax(v))} />
-          <Field label="Total" value={total} onChange={(v) => (markDirty("total"), setTotal(v))} />
+          <Field label="Subtotal" value={subtotal} disabled={readOnly} onChange={(v) => (markDirty("subtotal"), setSubtotal(v))} />
+          <Field label="Tax" value={tax} disabled={readOnly} onChange={(v) => (markDirty("tax"), setTax(v))} />
+          <Field label="Total" value={total} disabled={readOnly} onChange={(v) => (markDirty("total"), setTotal(v))} />
         </div>
 
         <div style={{ marginTop: 12 }}>
           <label style={{ fontWeight: 800, display: "block", marginBottom: 6 }}>Supplier address</label>
           <textarea
             value={supplierAddress}
+            disabled={readOnly}
             onChange={(e) => {
               markDirty("supplierAddress");
               setSupplierAddress(e.target.value);
             }}
             rows={3}
-            style={textareaStyle}
+            style={{ ...textareaStyle, ...(readOnly ? disabledStyle : null) }}
           />
         </div>
       </section>
@@ -377,12 +458,25 @@ export default function InvoiceReviewPage() {
       <section style={{ marginTop: 16, padding: 14, border: "1px solid #333", borderRadius: 12, background: "#0a0a0a" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 16, fontWeight: 900, margin: 0 }}>Line items</h2>
-          <button
-            onClick={addLineItem}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #444", cursor: "pointer", background: "#111", color: "#fff" }}
-          >
-            Add line item
-          </button>
+
+          {/* Add hidden once finalized */}
+          {!isFinalized && (
+            <button
+              onClick={addLineItem}
+              disabled={readOnly}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #444",
+                cursor: readOnly ? "not-allowed" : "pointer",
+                background: "#111",
+                color: "#fff",
+                opacity: readOnly ? 0.7 : 1,
+              }}
+            >
+              Add line item
+            </button>
+          )}
         </div>
 
         <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
@@ -395,48 +489,57 @@ export default function InvoiceReviewPage() {
                   <input
                     placeholder="Description"
                     value={li.description ?? ""}
+                    disabled={readOnly}
                     onChange={(e) => updateLineItem(i, { description: e.target.value })}
-                    style={{ ...inputStyle, flex: "2 1 280px", minWidth: 220 }}
+                    style={{ ...inputStyle, flex: "2 1 280px", minWidth: 220, ...(readOnly ? disabledStyle : null) }}
                   />
 
                   <input
                     placeholder="Qty"
                     value={li.quantity ?? ""}
+                    disabled={readOnly}
                     onChange={(e) => updateLineItem(i, { quantity: e.target.value ? Number(e.target.value) : null })}
-                    style={{ ...inputStyle, flex: "1 1 90px", minWidth: 90 }}
+                    style={{ ...inputStyle, flex: "1 1 90px", minWidth: 90, ...(readOnly ? disabledStyle : null) }}
                   />
 
                   <input
                     placeholder="Unit price"
                     value={li.unitPrice ?? ""}
+                    disabled={readOnly}
                     onChange={(e) => updateLineItem(i, { unitPrice: e.target.value ? Number(e.target.value) : null })}
-                    style={{ ...inputStyle, flex: "1 1 130px", minWidth: 120 }}
+                    style={{ ...inputStyle, flex: "1 1 130px", minWidth: 120, ...(readOnly ? disabledStyle : null) }}
                   />
 
                   <input
                     placeholder="Amount"
                     value={li.amount ?? ""}
+                    disabled={readOnly}
                     onChange={(e) => updateLineItem(i, { amount: e.target.value ? Number(e.target.value) : null })}
-                    style={{ ...inputStyle, flex: "1 1 130px", minWidth: 120 }}
+                    style={{ ...inputStyle, flex: "1 1 130px", minWidth: 120, ...(readOnly ? disabledStyle : null) }}
                   />
 
-                  <button
-                    onClick={() => removeLineItem(i)}
-                    style={{
-                      padding: "8px 10px",
-                      borderRadius: 10,
-                      border: "1px solid #444",
-                      cursor: "pointer",
-                      background: "#111",
-                      color: "#fff",
-                      flex: "0 0 40px",
-                      height: 40,
-                    }}
-                    aria-label="Remove line item"
-                    title="Remove"
-                  >
-                    X
-                  </button>
+                  {/* Remove hidden once finalized */}
+                  {!isFinalized && (
+                    <button
+                      onClick={() => removeLineItem(i)}
+                      disabled={readOnly}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: "1px solid #444",
+                        cursor: readOnly ? "not-allowed" : "pointer",
+                        background: "#111",
+                        color: "#fff",
+                        flex: "0 0 40px",
+                        height: 40,
+                        opacity: readOnly ? 0.7 : 1,
+                      }}
+                      aria-label="Remove line item"
+                      title="Remove"
+                    >
+                      X
+                    </button>
+                  )}
                 </div>
               </div>
             ))
@@ -447,11 +550,16 @@ export default function InvoiceReviewPage() {
   );
 }
 
-function Field(props: { label: string; value: string; onChange: (v: string) => void }) {
+function Field(props: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <div>
       <label style={{ fontWeight: 800, display: "block", marginBottom: 6 }}>{props.label}</label>
-      <input value={props.value} onChange={(e) => props.onChange(e.target.value)} style={inputStyle} />
+      <input
+        value={props.value}
+        disabled={props.disabled}
+        onChange={(e) => props.onChange(e.target.value)}
+        style={{ ...inputStyle, ...(props.disabled ? disabledStyle : null) }}
+      />
     </div>
   );
 }
