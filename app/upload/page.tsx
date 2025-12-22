@@ -87,7 +87,7 @@ export default function UploadPage() {
     <main style={{ maxWidth: 700, margin: "30px auto", padding: 16 }}>
       <h1 style={{ fontSize: 24, fontWeight: 800 }}>Upload invoice</h1>
       <p style={{ opacity: 0.8, marginTop: 6 }}>
-        Upload a PDF or image. Next we’ll connect Document AI to auto-extract fields.
+        Upload a PDF or image.
       </p>
 
       <div
