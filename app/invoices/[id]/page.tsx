@@ -35,6 +35,7 @@ type InvoiceDoc = {
 
   storagePath?: string | null;
   originalFileName?: string | null;
+  errorMessage?: string | null;
 };
 
 function tsToDateInput(ts: any): string {
@@ -96,6 +97,7 @@ export default function InvoiceReviewPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
 
   // Local editable state
   const [supplierName, setSupplierName] = useState("");
@@ -233,6 +235,20 @@ export default function InvoiceReviewPage() {
     }
   }
 
+  async function retryExtraction() {
+    if (!canEdit || !invoiceId) return;
+    setReprocessing(true);
+    try {
+      const fn = httpsCallable(functions, "reprocessInvoiceV2");
+      await fn({ invoiceId });
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || "Retry failed. Check Functions logs.");
+    } finally {
+      setReprocessing(false);
+    }
+  }
+
   async function downloadOriginal() {
     if (!inv?.storagePath) return;
 
@@ -364,6 +380,24 @@ export default function InvoiceReviewPage() {
             </>
           )}
 
+          {inv.status === "error" && (
+            <button
+              disabled={reprocessing || saving || deleting}
+              onClick={retryExtraction}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #2f4f7a",
+                cursor: reprocessing || saving || deleting ? "not-allowed" : "pointer",
+                background: "#0e1622",
+                color: "#fff",
+                opacity: reprocessing || saving || deleting ? 0.7 : 1,
+              }}
+            >
+              {reprocessing ? "Retrying..." : "Retry extraction"}
+            </button>
+          )}
+
           <button
             disabled={deleting || saving}
             onClick={deleteInvoice}
@@ -381,6 +415,21 @@ export default function InvoiceReviewPage() {
           </button>
         </div>
       </div>
+
+      {inv.status === "error" && inv.errorMessage ? (
+        <div
+          style={{
+            marginTop: 14,
+            padding: 12,
+            border: "1px solid #7a2a2a",
+            borderRadius: 12,
+            background: "#1a0f0f",
+            color: "#fca5a5",
+          }}
+        >
+          Extraction failed: {inv.errorMessage}
+        </div>
+      ) : null}
 
       {/* Header */}
       <section style={{ marginTop: 16, padding: 14, border: "1px solid #333", borderRadius: 12, background: "#0a0a0a" }}>
