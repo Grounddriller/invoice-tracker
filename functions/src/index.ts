@@ -326,3 +326,47 @@ export const reprocessInvoiceV2 = onCall(async (request) => {
   await processInvoiceDocument(invoiceRef, data, { clearError: true });
   return { ok: true };
 });
+
+export const bulkDeleteInvoicesV2 = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in required.");
+
+  const invoiceIds = request.data?.invoiceIds;
+  if (!Array.isArray(invoiceIds)) {
+    throw new HttpsError("invalid-argument", "invoiceIds must be an array.");
+  }
+
+  const trimmed = invoiceIds.map((id: any) => String(id || "").trim()).filter(Boolean);
+  if (trimmed.length === 0) {
+    throw new HttpsError("invalid-argument", "No invoiceIds provided.");
+  }
+  if (trimmed.length > 200) {
+    throw new HttpsError("invalid-argument", "Too many invoices selected. Limit to 200 at a time.");
+  }
+
+  const db = admin.firestore();
+  const refs = trimmed.map((id: string) => db.collection("invoices").doc(id));
+  const snaps = await db.getAll(...refs);
+
+  const batch = db.batch();
+  const storageDeletes: Promise<any>[] = [];
+
+  snaps.forEach((snap, index) => {
+    if (!snap.exists) return;
+    const data = snap.data() as any;
+    if (!request.auth || data.userId !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "Not allowed to delete one or more invoices.");
+    }
+
+    const storagePath = data.storagePath;
+    if (storagePath) {
+      storageDeletes.push(admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true } as any));
+    }
+
+    batch.delete(refs[index]);
+  });
+
+  await Promise.all(storageDeletes);
+  await batch.commit();
+
+  return { ok: true, deletedCount: snaps.filter((snap) => snap.exists).length };
+});

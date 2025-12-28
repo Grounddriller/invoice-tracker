@@ -10,7 +10,8 @@ import {
   query,
   where,
 } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { auth, db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/useAuth";
 
 type InvoiceRow = {
@@ -59,6 +60,8 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState("created_desc");
   const [minTotal, setMinTotal] = useState("");
   const [maxTotal, setMaxTotal] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
@@ -151,6 +154,45 @@ export default function DashboardPage() {
     () => invoices.filter((inv) => inv.status === "finalized").length,
     [invoices]
   );
+  const selectedCount = selectedIds.size;
+
+  function toggleSelection(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function selectAllFiltered() {
+    setSelectedIds(new Set(filteredInvoices.map((inv) => inv.id)));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  async function bulkDelete() {
+    if (selectedCount === 0 || bulkDeleting) return;
+    const ok = confirm(`Delete ${selectedCount} invoice${selectedCount === 1 ? "" : "s"}? This cannot be undone.`);
+    if (!ok) return;
+
+    setBulkDeleting(true);
+    try {
+      const fn = httpsCallable(functions, "bulkDeleteInvoicesV2");
+      await fn({ invoiceIds: Array.from(selectedIds) });
+      setSelectedIds(new Set());
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || "Bulk delete failed. Check Functions logs.");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
 
   if (loading) return <div style={{ padding: 16, color: UI.text }}>Loading...</div>;
   if (!user) return null;
@@ -303,6 +345,57 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <button
+          onClick={selectAllFiltered}
+          disabled={filteredInvoices.length === 0}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: `1px solid ${UI.border}`,
+            cursor: filteredInvoices.length === 0 ? "not-allowed" : "pointer",
+            opacity: filteredInvoices.length === 0 ? 0.6 : 1,
+            background: UI.buttonBg,
+            color: UI.text,
+          }}
+        >
+          Select all filtered
+        </button>
+        <button
+          onClick={clearSelection}
+          disabled={selectedCount === 0}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: `1px solid ${UI.border}`,
+            cursor: selectedCount === 0 ? "not-allowed" : "pointer",
+            opacity: selectedCount === 0 ? 0.6 : 1,
+            background: UI.buttonBg,
+            color: UI.text,
+          }}
+        >
+          Clear selection
+        </button>
+        <button
+          onClick={bulkDelete}
+          disabled={selectedCount === 0 || bulkDeleting}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid #7a2a2a",
+            cursor: selectedCount === 0 || bulkDeleting ? "not-allowed" : "pointer",
+            opacity: selectedCount === 0 || bulkDeleting ? 0.6 : 1,
+            background: "#1a0f0f",
+            color: "#fff",
+          }}
+        >
+          {bulkDeleting ? "Deleting..." : "Delete selected"}
+        </button>
+        <div style={{ color: UI.muted, fontSize: 13 }}>
+          {selectedCount} selected
+        </div>
+      </div>
+
       <Section title="Invoices" subtitle="Sorted and filtered by metadata">
         {filteredInvoices.length === 0 ? (
           <EmptyState text="No invoices match the current filters." />
@@ -311,6 +404,8 @@ export default function DashboardPage() {
             <InvoiceRowCard
               key={inv.id}
               inv={inv}
+              selected={selectedIds.has(inv.id)}
+              onToggleSelect={() => toggleSelection(inv.id)}
               onClick={() => router.push(`/invoices/${inv.id}`)}
             />
           ))
@@ -349,7 +444,17 @@ function EmptyState({ text }: { text: string }) {
   return <div style={{ padding: 14, color: UI.muted }}>{text}</div>;
 }
 
-function InvoiceRowCard({ inv, onClick }: { inv: any; onClick: () => void }) {
+function InvoiceRowCard({
+  inv,
+  onClick,
+  selected,
+  onToggleSelect,
+}: {
+  inv: any;
+  onClick: () => void;
+  selected: boolean;
+  onToggleSelect: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -365,9 +470,18 @@ function InvoiceRowCard({ inv, onClick }: { inv: any; onClick: () => void }) {
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {inv.supplierName || "Unknown vendor"}{" "}
-            {inv.invoiceNumber ? <span style={{ color: UI.muted }}>• #{inv.invoiceNumber}</span> : null}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggleSelect}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 16, height: 16 }}
+            />
+            <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {inv.supplierName || "Unknown vendor"}{" "}
+              {inv.invoiceNumber ? <span style={{ color: UI.muted }}>• #{inv.invoiceNumber}</span> : null}
+            </div>
           </div>
           <div style={{ marginTop: 6, color: UI.muted }}>
             Status: <b style={{ color: UI.text }}>{inv.status || "uploaded"}</b>
