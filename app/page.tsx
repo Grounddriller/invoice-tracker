@@ -17,6 +17,7 @@ type InvoiceRow = {
   id: string;
   supplierName?: string | null;
   invoiceNumber?: string | null;
+  originalFileName?: string | null;
   total?: number | null;
   status?: string | null;
   createdAt?: any;
@@ -32,43 +33,57 @@ const UI = {
   buttonBg: "#0f0f0f",
 };
 
+function tsToMillis(ts: any) {
+  if (!ts) return 0;
+  if (typeof ts?.toMillis === "function") return ts.toMillis();
+  if (typeof ts?.seconds === "number") return ts.seconds * 1000;
+  return 0;
+}
+
+function formatDate(ts: any) {
+  const ms = tsToMillis(ts);
+  if (!ms) return "";
+  const d = new Date(ms);
+  return d.toLocaleDateString();
+}
+
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
-  const [activeInvoices, setActiveInvoices] = useState<InvoiceRow[]>([]);
-  const [finalizedInvoices, setFinalizedInvoices] = useState<InvoiceRow[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [indexHint, setIndexHint] = useState<string | null>(null);
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("created_desc");
+  const [minTotal, setMinTotal] = useState("");
+  const [maxTotal, setMaxTotal] = useState("");
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [loading, user, router]);
 
-  // ACTIVE = not finalized
   useEffect(() => {
     if (!user) return;
 
-    const qActive = query(
+    const qAll = query(
       collection(db, "invoices"),
       where("userId", "==", user.uid),
-      where("status", "!=", "finalized"),
-      orderBy("status"), // required for "!=" queries
       orderBy("createdAt", "desc")
     );
 
     const unsub = onSnapshot(
-      qActive,
+      qAll,
       (snap) => {
-        setActiveInvoices(
-          snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-        );
+        setInvoices(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
         setIndexHint(null);
       },
       (error: any) => {
-        console.error("Active invoices listener error:", error);
+        console.error("Invoices listener error:", error);
         if (error?.code === "failed-precondition") {
           setIndexHint(
-            "Firestore needs an index for the Active invoices query. Check the console error link and click Create Index."
+            "Firestore needs an index for the invoices query. Check the console error link and click Create Index."
           );
         }
       }
@@ -77,42 +92,64 @@ export default function DashboardPage() {
     return () => unsub();
   }, [user]);
 
-  // FINALIZED
-  useEffect(() => {
-    if (!user) return;
+  const filteredInvoices = useMemo(() => {
+    let rows = [...invoices];
 
-    const qFinal = query(
-      collection(db, "invoices"),
-      where("userId", "==", user.uid),
-      where("status", "==", "finalized"),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsub = onSnapshot(
-      qFinal,
-      (snap) => {
-        setFinalizedInvoices(
-          snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-        );
-        setIndexHint(null);
-      },
-      (error: any) => {
-        console.error("Finalized invoices listener error:", error);
-        if (error?.code === "failed-precondition") {
-          setIndexHint(
-            "Firestore needs an index for the Finalized invoices query. Check the console error link and click Create Index."
-          );
-        }
+    if (statusFilter !== "all") {
+      if (statusFilter === "active") {
+        rows = rows.filter((inv) => inv.status !== "finalized");
+      } else {
+        rows = rows.filter((inv) => (inv.status || "uploaded") === statusFilter);
       }
-    );
+    }
 
-    return () => unsub();
-  }, [user]);
+    const searchValue = search.trim().toLowerCase();
+    if (searchValue) {
+      rows = rows.filter((inv) => {
+        const fields = [inv.supplierName, inv.invoiceNumber, inv.originalFileName]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return fields.includes(searchValue);
+      });
+    }
 
-  const activeCount = useMemo(() => activeInvoices.length, [activeInvoices]);
+    const min = Number(minTotal);
+    if (Number.isFinite(min) && minTotal !== "") {
+      rows = rows.filter((inv) => typeof inv.total === "number" && inv.total >= min);
+    }
+
+    const max = Number(maxTotal);
+    if (Number.isFinite(max) && maxTotal !== "") {
+      rows = rows.filter((inv) => typeof inv.total === "number" && inv.total <= max);
+    }
+
+    rows.sort((a, b) => {
+      switch (sortBy) {
+        case "created_asc":
+          return tsToMillis(a.createdAt) - tsToMillis(b.createdAt);
+        case "total_desc":
+          return (b.total ?? 0) - (a.total ?? 0);
+        case "total_asc":
+          return (a.total ?? 0) - (b.total ?? 0);
+        case "supplier_asc":
+          return String(a.supplierName || "").localeCompare(String(b.supplierName || ""));
+        case "created_desc":
+        default:
+          return tsToMillis(b.createdAt) - tsToMillis(a.createdAt);
+      }
+    });
+
+    return rows;
+  }, [invoices, statusFilter, search, minTotal, maxTotal, sortBy]);
+
+  const activeCount = useMemo(
+    () => invoices.filter((inv) => inv.status !== "finalized").length,
+    [invoices]
+  );
   const finalizedCount = useMemo(
-    () => finalizedInvoices.length,
-    [finalizedInvoices]
+    () => invoices.filter((inv) => inv.status === "finalized").length,
+    [invoices]
   );
 
   if (loading) return <div style={{ padding: 16, color: UI.text }}>Loading...</div>;
@@ -139,7 +176,7 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Btn onClick={() => router.push("/upload")}>Upload invoice</Btn>
+          <Btn onClick={() => router.push("/upload")}>Upload invoices</Btn>
           <Btn onClick={() => signOut(auth)}>Sign out</Btn>
         </div>
       </header>
@@ -159,33 +196,118 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {/* ACTIVE SECTION */}
-      <Section
-        title="Active invoices"
-        subtitle="Uploaded / Processing / Needs review"
+      <section
+        style={{
+          marginTop: 18,
+          border: `1px solid ${UI.border}`,
+          borderRadius: 12,
+          background: UI.panel,
+          padding: 14,
+          display: "grid",
+          gap: 12,
+        }}
       >
-        {activeInvoices.length === 0 ? (
-          <EmptyState text="No active invoices yet. Click “Upload invoice”." />
-        ) : (
-          activeInvoices.map((inv) => (
-            <InvoiceRowCard
-              key={inv.id}
-              inv={inv}
-              onClick={() => router.push(`/invoices/${inv.id}`)}
-            />
-          ))
-        )}
-      </Section>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplier, invoice #, filename"
+            style={{
+              flex: "2 1 260px",
+              minWidth: 220,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          />
 
-      {/* FINALIZED SECTION */}
-      <Section
-        title="Finalized invoices"
-        subtitle="Read-only invoices you’ve completed"
-      >
-        {finalizedInvoices.length === 0 ? (
-          <EmptyState text="No finalized invoices yet." />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{
+              flex: "1 1 160px",
+              minWidth: 150,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active (non-finalized)</option>
+            <option value="uploaded">Uploaded</option>
+            <option value="processing">Processing</option>
+            <option value="needs_review">Needs review</option>
+            <option value="error">Error</option>
+            <option value="finalized">Finalized</option>
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            style={{
+              flex: "1 1 160px",
+              minWidth: 150,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          >
+            <option value="created_desc">Newest first</option>
+            <option value="created_asc">Oldest first</option>
+            <option value="total_desc">Highest total</option>
+            <option value="total_asc">Lowest total</option>
+            <option value="supplier_asc">Supplier (A-Z)</option>
+          </select>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input
+            value={minTotal}
+            onChange={(e) => setMinTotal(e.target.value)}
+            placeholder="Min total"
+            inputMode="decimal"
+            style={{
+              flex: "1 1 140px",
+              minWidth: 120,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          />
+          <input
+            value={maxTotal}
+            onChange={(e) => setMaxTotal(e.target.value)}
+            placeholder="Max total"
+            inputMode="decimal"
+            style={{
+              flex: "1 1 140px",
+              minWidth: 120,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          />
+          <div style={{ alignSelf: "center", color: UI.muted, fontSize: 13 }}>
+            {filteredInvoices.length} result{filteredInvoices.length === 1 ? "" : "s"}
+          </div>
+        </div>
+      </section>
+
+      <Section title="Invoices" subtitle="Sorted and filtered by metadata">
+        {filteredInvoices.length === 0 ? (
+          <EmptyState text="No invoices match the current filters." />
         ) : (
-          finalizedInvoices.map((inv) => (
+          filteredInvoices.map((inv) => (
             <InvoiceRowCard
               key={inv.id}
               inv={inv}
@@ -249,6 +371,9 @@ function InvoiceRowCard({ inv, onClick }: { inv: any; onClick: () => void }) {
           </div>
           <div style={{ marginTop: 6, color: UI.muted }}>
             Status: <b style={{ color: UI.text }}>{inv.status || "uploaded"}</b>
+            {inv.createdAt ? (
+              <span style={{ marginLeft: 8 }}>· {formatDate(inv.createdAt)}</span>
+            ) : null}
           </div>
         </div>
 
