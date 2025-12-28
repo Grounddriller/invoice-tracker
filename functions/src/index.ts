@@ -180,12 +180,21 @@ export const processInvoiceOnCreateV2 = onDocumentCreated(
   const data = snap.data() as any;
 
   // Only act on newly created uploads
-  if (!data || data.status !== "uploaded") return;
+  if (!data || data.status !== "uploaded" || data.skipProcessing) return;
 
   const docRef = snap.ref;
+  await processInvoiceDocument(docRef, data, { clearError: true });
+  }
+);
 
+async function processInvoiceDocument(
+  docRef: admin.firestore.DocumentReference,
+  data: any,
+  options?: { clearError?: boolean }
+) {
   await docRef.update({
     status: "processing",
+    ...(options?.clearError ? { errorMessage: null } : {}),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
@@ -270,8 +279,7 @@ export const processInvoiceOnCreateV2 = onDocumentCreated(
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   }
-  }
-);
+}
 
 export const deleteInvoiceV2 = onCall(async (request) => {
   if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in required.");
@@ -296,3 +304,25 @@ export const deleteInvoiceV2 = onCall(async (request) => {
   return { ok: true };
 });
 
+export const reprocessInvoiceV2 = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in required.");
+
+  const invoiceId = String(request.data?.invoiceId || "").trim();
+  if (!invoiceId) throw new HttpsError("invalid-argument", "Missing invoiceId.");
+
+  const invoiceRef = admin.firestore().collection("invoices").doc(invoiceId);
+  const snap = await invoiceRef.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Invoice not found.");
+
+  const data = snap.data() as any;
+  if (data.userId !== request.auth.uid) throw new HttpsError("permission-denied", "Not allowed.");
+  if (data.status === "finalized") {
+    throw new HttpsError("failed-precondition", "Finalized invoices cannot be reprocessed.");
+  }
+  if (!data.storagePath) {
+    throw new HttpsError("failed-precondition", "No storage file available for reprocessing.");
+  }
+
+  await processInvoiceDocument(invoiceRef, data, { clearError: true });
+  return { ok: true };
+});
