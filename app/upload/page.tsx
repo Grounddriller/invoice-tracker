@@ -27,7 +27,8 @@ type UploadItem = {
 };
 
 const MAX_CONCURRENT_UPLOADS = 3;
-const TEST_UPLOAD_COUNT = 25;
+const DEFAULT_TEST_UPLOAD_COUNT = 25;
+const MAX_TEST_UPLOAD_COUNT = 200;
 
 export default function UploadPage() {
   const { user, loading } = useAuth();
@@ -41,6 +42,7 @@ export default function UploadPage() {
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [testNotice, setTestNotice] = useState<string | null>(null);
+  const [testCount, setTestCount] = useState(String(DEFAULT_TEST_UPLOAD_COUNT));
 
   useEffect(() => {
     if (!loading && !user) router.push("/login");
@@ -202,7 +204,12 @@ export default function UploadPage() {
         "Sunrise Logistics",
       ];
 
-      for (let i = 0; i < TEST_UPLOAD_COUNT; i += 1) {
+      const count = Math.max(
+        1,
+        Math.min(MAX_TEST_UPLOAD_COUNT, Number(testCount) || DEFAULT_TEST_UPLOAD_COUNT)
+      );
+
+      for (let i = 0; i < count; i += 1) {
         const ref = doc(col);
         const total = Math.round((Math.random() * 4500 + 120) * 100) / 100;
         const invoiceDate = new Date(Date.now() - Math.floor(Math.random() * 30) * 86400000);
@@ -233,7 +240,7 @@ export default function UploadPage() {
       }
 
       await batch.commit();
-      setTestNotice(`Created ${TEST_UPLOAD_COUNT} simulated invoices.`);
+      setTestNotice(`Created ${count} simulated invoices.`);
     } catch (e: any) {
       setTestError(e?.message || "Test upload failed.");
     } finally {
@@ -438,10 +445,30 @@ export default function UploadPage() {
       >
         <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>Simulated test uploads</h2>
         <p style={{ marginTop: 6, opacity: 0.75, fontSize: 13 }}>
-          Instantly create {TEST_UPLOAD_COUNT} fake invoices for demos or stress testing.
+          Instantly create fake invoices for demos or stress testing.
         </p>
 
-        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ fontSize: 13, opacity: 0.8 }}>
+            Count
+            <input
+              type="number"
+              min={1}
+              max={MAX_TEST_UPLOAD_COUNT}
+              value={testCount}
+              onChange={(e) => setTestCount(e.target.value)}
+              disabled={testBusy}
+              style={{
+                marginLeft: 8,
+                width: 100,
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: "1px solid #3a3a3a",
+                background: "#0f0f0f",
+                color: "#fff",
+              }}
+            />
+          </label>
           <button
             onClick={simulateTestUploads}
             disabled={testBusy}
@@ -455,6 +482,9 @@ export default function UploadPage() {
           >
             {testBusy ? "Creating..." : "Create simulated invoices"}
           </button>
+          <div style={{ fontSize: 12, opacity: 0.6 }}>
+            Max {MAX_TEST_UPLOAD_COUNT}
+          </div>
         </div>
 
         {testNotice ? <div style={{ marginTop: 10, color: "#16a34a" }}>{testNotice}</div> : null}

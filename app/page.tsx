@@ -19,6 +19,7 @@ type InvoiceRow = {
   supplierName?: string | null;
   invoiceNumber?: string | null;
   originalFileName?: string | null;
+  contentType?: string | null;
   total?: number | null;
   status?: string | null;
   createdAt?: any;
@@ -48,6 +49,17 @@ function formatDate(ts: any) {
   return d.toLocaleDateString();
 }
 
+function fileTypeCategory(inv: InvoiceRow) {
+  const contentType = inv.contentType?.toLowerCase() ?? "";
+  const fileName = inv.originalFileName?.toLowerCase() ?? "";
+
+  if (contentType.startsWith("application/pdf") || fileName.endsWith(".pdf")) return "pdf";
+  if (contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|tiff?)$/.test(fileName)) return "image";
+  if (contentType) return "other";
+  if (fileName) return "other";
+  return "unknown";
+}
+
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -57,6 +69,7 @@ export default function DashboardPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [fileTypeFilter, setFileTypeFilter] = useState("all");
   const [sortBy, setSortBy] = useState("created_desc");
   const [minTotal, setMinTotal] = useState("");
   const [maxTotal, setMaxTotal] = useState("");
@@ -106,6 +119,10 @@ export default function DashboardPage() {
       }
     }
 
+    if (fileTypeFilter !== "all") {
+      rows = rows.filter((inv) => fileTypeCategory(inv) === fileTypeFilter);
+    }
+
     const searchValue = search.trim().toLowerCase();
     if (searchValue) {
       rows = rows.filter((inv) => {
@@ -144,7 +161,7 @@ export default function DashboardPage() {
     });
 
     return rows;
-  }, [invoices, statusFilter, search, minTotal, maxTotal, sortBy]);
+  }, [invoices, statusFilter, fileTypeFilter, search, minTotal, maxTotal, sortBy]);
 
   const activeCount = useMemo(
     () => invoices.filter((inv) => inv.status !== "finalized").length,
@@ -285,6 +302,26 @@ export default function DashboardPage() {
             <option value="needs_review">Needs review</option>
             <option value="error">Error</option>
             <option value="finalized">Finalized</option>
+          </select>
+
+          <select
+            value={fileTypeFilter}
+            onChange={(e) => setFileTypeFilter(e.target.value)}
+            style={{
+              flex: "1 1 140px",
+              minWidth: 140,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.border}`,
+              background: UI.panel2,
+              color: UI.text,
+            }}
+          >
+            <option value="all">All file types</option>
+            <option value="pdf">PDF</option>
+            <option value="image">Image</option>
+            <option value="other">Other</option>
+            <option value="unknown">Unknown</option>
           </select>
 
           <select
@@ -518,4 +555,3 @@ function Btn(props: { children: React.ReactNode; onClick?: () => void; disabled?
     </button>
   );
 }
-
